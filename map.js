@@ -1,213 +1,344 @@
-// Inicializar mapa
-const map = L.map('map').setView([20.5, -103.5], 8);
+/**
+ * Dashboard Turismo - Jalisco
+ * Script principal para la gestión del mapa interactivo
+ * 
+ * Funcionalidades:
+ * - Carga del mapa base con Leaflet
+ * - Renderizado de municipios desde GeoJSON
+ * - Interactividad: hover transparente y click para mostrar información
+ * - Pop-ups con información turística de cada municipio
+ */
 
-// Capa base
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    attribution: '© OpenStreetMap contributors',
-    maxZoom: 19
-}).addTo(map);
+// ============================================
+// VARIABLES GLOBALES
+// ============================================
 
-// Variables globales
+let map;
+let geojsonLayer;
 let municipiosData = {};
+let currentActiveFeature = null;
 let pueblosMagicosData = [];
-let municipiosGeoJSON = null;
+let pueblosMagicosMarkers = [];
 
-// Cargar datos desde municipios_data.json
-async function loadMunicipiosData() {
-    try {
-        const response = await fetch('municipios_data.json');
-        const data = await response.json();
-        
-        data.municipios.forEach(m => {
-            municipiosData[m.nombre] = m;
-            pueblosMagicosData.push({
-                nombre: m.nombre,
-                lat: m.lat,
-                lng: m.lng
-            });
-        });
-        
-        console.log('Datos cargados:', Object.keys(municipiosData).length, 'pueblos');
-        
-        loadMunicipiosGeoJSON();
-        addPueblosMagicosToMap();
-        
-    } catch (error) {
-        console.error('Error cargando datos:', error);
+// Colores y estilos
+const STYLES = {
+    default: {
+        color: '#666',
+        weight: 2,
+        opacity: 0.7,
+        fillColor: '#d0d0d0',
+        fillOpacity: 0.7
+    },
+    hover: {
+        color: '#2a5298',
+        weight: 2.5,
+        opacity: 1,
+        fillColor: '#2a5298',
+        fillOpacity: 0.3
+    },
+    active: {
+        color: '#1e3c72',
+        weight: 3,
+        opacity: 1,
+        fillColor: '#2a5298',
+        fillOpacity: 0.5
     }
+};
+
+// ============================================
+// INICIALIZACIÓN DEL MAPA
+// ============================================
+
+function initMap() {
+    // Crear mapa centrado en Jalisco
+    // Coordenadas aproximadas del centro de Jalisco
+    map = L.map('map').setView([20.5, -103.5], 8);
+
+    // Agregar capa base de OpenStreetMap
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '© OpenStreetMap contributors',
+        maxZoom: 19,
+        minZoom: 7
+    }).addTo(map);
+
+    // Cargar datos de municipios
+    loadMunicipiosData();
+    
+    // Cargar y mostrar Pueblos Mágicos
+    loadPueblosMagicos();
 }
 
-// Cargar GeoJSON de municipios
-function loadMunicipiosGeoJSON() {
-    fetch('jalisco_municipios.geojson')
+// ============================================
+// CARGAR Y MOSTRAR PUEBLOS MÁGICOS
+// ============================================
+
+function loadPueblosMagicos() {
+    fetch('pueblos_magicos.json')
         .then(response => response.json())
         .then(data => {
-            municipiosGeoJSON = data;
-            addMunicipiosToMap();
+            pueblosMagicosData = data.pueblos_magicos;
+            addPueblosMagicosToMap();
         })
-        .catch(error => console.error('Error cargando GeoJSON:', error));
+        .catch(error => console.error('Error cargando pueblos_magicos.json:', error));
 }
 
-// Agregar municipios al mapa
-function addMunicipiosToMap() {
-    L.geoJSON(municipiosGeoJSON, {
-        style: {
-            color: '#999',
-            weight: 1,
-            opacity: 0.7,
-            fillColor: '#f0f0f0',
-            fillOpacity: 0.3
-        },
-        onEachFeature: function(feature, layer) {
-            const nombreMunicipio = feature.properties.NOMGEO;
-            
-            layer.on('click', function() {
-                showMunicipioInfo(nombreMunicipio);
-            });
-            
-            layer.on('mouseover', function() {
-                layer.setStyle({
-                    fillOpacity: 0.5,
-                    weight: 2
-                });
-                
-                // Mostrar nombre en tooltip
-                const popup = L.popup()
-                    .setLatLng(layer.getBounds().getCenter())
-                    .setContent(nombreMunicipio)
-                    .openOn(map);
-            });
-            
-            layer.on('mouseout', function() {
-                layer.setStyle({
-                    fillOpacity: 0.3,
-                    weight: 1
-                });
-                map.closePopup();
-            });
-        }
-    }).addTo(map);
-}
-
-// Agregar marcadores de Pueblos Mágicos
 function addPueblosMagicosToMap() {
+    // Crear ícono personalizado para Pueblos Mágicos
     const puebloMagicoIcon = L.icon({
         iconUrl: 'pueblo-magico-icon.png',
         iconSize: [32, 32],
         iconAnchor: [16, 16],
         popupAnchor: [0, -16]
     });
-    
+
+    // Agregar marcador para cada Pueblo Mágico
     pueblosMagicosData.forEach(pueblo => {
         const marker = L.marker([pueblo.lat, pueblo.lng], {
             icon: puebloMagicoIcon,
-            zIndexOffset: 1000
+            title: pueblo.nombre,
+            zIndexOffset: 1000 // Asegurar que los íconos estén por encima de los polígonos
         }).addTo(map);
-        
-        marker.on('click', function() {
-            showMunicipioInfo(pueblo.nombre);
-        });
-        
+
+        // Agregar tooltip con el nombre del Pueblo Mágico
         marker.bindTooltip(pueblo.nombre, {
             permanent: false,
-            direction: 'top'
+            direction: 'top',
+            className: 'pueblo-magico-tooltip'
         });
+
+        // Agregar evento de click para mostrar información del municipio
+        marker.on('click', function() {
+            showMunicipioInfo(pueblo.municipio);
+        });
+
+        pueblosMagicosMarkers.push(marker);
     });
 }
 
-// Mostrar información del municipio en modal
-function showMunicipioInfo(nombreMunicipio) {
-    const data = municipiosData[nombreMunicipio];
-    
-    if (!data) {
-        console.error('No se encontraron datos para:', nombreMunicipio);
-        return;
-    }
-    
+// ============================================
+// CARGAR DATOS DE MUNICIPIOS
+// ============================================
+
+function loadMunicipiosData() {
+    // Cargar información de distancia y tiempo
+    fetch('municipios_info.json')
+        .then(response => response.json())
+        .then(data => {
+            municipiosData = data.municipios;
+            // Cargar GeoJSON después de obtener los datos
+            loadGeoJSON();
+        })
+        .catch(error => console.error('Error cargando municipios_info.json:', error));
+}
+
+// ============================================
+// CARGAR GEOJSON DE MUNICIPIOS
+// ============================================
+
+function loadGeoJSON() {
+    fetch('jalisco_municipios.geojson')
+        .then(response => response.json())
+        .then(data => {
+            geojsonLayer = L.geoJSON(data, {
+                style: getFeatureStyle,
+                onEachFeature: onEachFeature
+            }).addTo(map);
+
+            // Ajustar vista al mapa cargado
+            if (geojsonLayer.getLayers().length > 0) {
+                map.fitBounds(geojsonLayer.getBounds(), { padding: [50, 50] });
+            }
+        })
+        .catch(error => console.error('Error cargando GeoJSON:', error));
+}
+
+// ============================================
+// OBTENER ESTILO DE CARACTERÍSTICA
+// ============================================
+
+function getFeatureStyle(feature) {
+    return STYLES.default;
+}
+
+// ============================================
+// PROCESAR CADA CARACTERÍSTICA DEL GEOJSON
+// ============================================
+
+function onEachFeature(feature, layer) {
+    const municipioNombre = feature.properties.NOMGEO;
+
+    // Agregar eventos de mouse
+    layer.on('mouseover', function() {
+        this.setStyle(STYLES.hover);
+        this.bringToFront();
+        
+        // Mostrar nombre del municipio en tooltip
+        this.bindTooltip(municipioNombre, {
+            permanent: false,
+            direction: 'center',
+            className: 'municipio-tooltip'
+        }).openTooltip();
+    });
+
+    layer.on('mouseout', function() {
+        // Restaurar estilo anterior si no está activo
+        if (currentActiveFeature !== this) {
+            this.setStyle(STYLES.default);
+        }
+        this.closeTooltip();
+    });
+
+    // Evento de click para mostrar información
+    layer.on('click', function() {
+        // Remover estilo activo del municipio anterior
+        if (currentActiveFeature && currentActiveFeature !== this) {
+            currentActiveFeature.setStyle(STYLES.default);
+        }
+
+        // Establecer nuevo municipio como activo
+        currentActiveFeature = this;
+        this.setStyle(STYLES.active);
+
+        // Mostrar modal con información
+        showMunicipioInfo(municipioNombre);
+    });
+}
+
+// ============================================
+// MOSTRAR INFORMACIÓN DEL MUNICIPIO
+// ============================================
+
+function showMunicipioInfo(municipioNombre) {
+    // Obtener datos del municipio
+    const info = municipiosData[municipioNombre] || {
+        distancia_km: 'N/A',
+        tiempo_horas: 'N/A',
+        tiempo_minutos: 'N/A'
+    };
+
+    // Construir contenido del modal
     const modalBody = document.getElementById('modalBody');
     
-    // Construir HTML del modal
-    let html = `
-        <h2 style="margin: 0 0 15px 0; font-size: 20px; font-weight: bold; border-bottom: 2px solid #333; padding-bottom: 10px;">
-            ${data.nombre}
-        </h2>
+    // Texto de recomendaciones de viaje (seguridad)
+    const recomendacionesTexto = `abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz`;
+
+    const tiempoFormato = `${info.tiempo_horas} horas (${info.tiempo_minutos} minutos)`;
+
+    modalBody.innerHTML = `
+        <h2>${municipioNombre}</h2>
         
-        <div style="margin-bottom: 12px;">
-            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 5px;">
-                <span style="font-size: 16px;">📍</span>
-                <span style="font-weight: bold; color: #333;">DESDE GUADALAJARA</span>
-            </div>
-            <div style="margin-left: 24px; color: #666; font-size: 14px;">
-                ${data.distancia_tiempo}
-            </div>
+        <div class="info-section">
+            <div class="info-label">📍 Distancia desde Guadalajara</div>
+            <div class="info-value">${info.distancia_km} km en carretera</div>
         </div>
-        
-        <div style="margin-bottom: 12px;">
-            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 5px;">
-                <span style="font-size: 16px;">🛡️</span>
-                <span style="font-weight: bold; color: #333;">CONSEJOS DE SEGURIDAD</span>
-            </div>
-            <div style="margin-left: 24px; color: #666; font-size: 13px; line-height: 1.4;">
-                ${data.consejos_seguridad}
-            </div>
+
+        <div class="info-section">
+            <div class="info-label">⏱️ Tiempo estimado de viaje</div>
+            <div class="info-value">${tiempoFormato}</div>
         </div>
-        
-        <div style="margin-bottom: 12px;">
-            <a href="tel:911" style="display: block; background-color: #c41e3a; color: white; padding: 12px; text-align: center; text-decoration: none; font-weight: bold; border-radius: 4px; font-size: 14px;">
-                📞 LLAMAR AL 911
-            </a>
-        </div>
-        
-        <div style="margin-bottom: 12px;">
-            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 5px;">
-                <span style="font-size: 16px;">🗺️</span>
-                <span style="font-weight: bold; color: #333;">RUTA / VIAJE DESDE GDL</span>
-            </div>
-            <div style="margin-left: 24px;">
-                <a href="${data.ruta_viaje}" target="_blank" style="color: #0066cc; text-decoration: none; font-size: 13px;">
-                    ${data.ruta_viaje} →
+
+        <div class="info-section">
+            <div class="info-label">🌟 Más información</div>
+            <div class="info-value">
+                <a href="https://pueblosmagicos.mexicodesconocido.com.mx/jalisco" target="_blank">
+                    Pueblos Mágicos de Jalisco →
                 </a>
             </div>
         </div>
-        
-        <div style="margin-bottom: 0;">
-            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 5px;">
-                <span style="font-size: 16px;">🌍</span>
-                <span style="font-weight: bold; color: #333;">LINK TURISMO</span>
-            </div>
-            <div style="margin-left: 24px;">
-                <a href="${data.link_turismo}" target="_blank" style="color: #0066cc; text-decoration: none; font-size: 13px;">
-                    ${data.link_turismo} →
-                </a>
-            </div>
+
+        <div class="recomendaciones">
+            <div class="recomendaciones-title">🛡️ Recomendaciones de Viaje (Seguridad)</div>
+            <div class="recomendaciones-text">${recomendacionesTexto}</div>
         </div>
     `;
-    
-    modalBody.innerHTML = html;
-    document.getElementById('infoModal').style.display = 'block';
+
+    // Mostrar modal
+    const modal = document.getElementById('infoModal');
+    modal.style.display = 'block';
 }
 
-// Cerrar modal
+// ============================================
+// CERRAR MODAL
+// ============================================
+
 function closeModal() {
-    document.getElementById('infoModal').style.display = 'none';
+    const modal = document.getElementById('infoModal');
+    modal.style.display = 'none';
+
+    // Remover estilo activo del municipio
+    if (currentActiveFeature) {
+        currentActiveFeature.setStyle(STYLES.default);
+        currentActiveFeature = null;
+    }
 }
 
-// Event listeners para cerrar modal
-document.querySelector('.close-btn').addEventListener('click', closeModal);
+// ============================================
+// EVENT LISTENERS
+// ============================================
 
-document.getElementById('infoModal').addEventListener('click', function(event) {
-    if (event.target === this) {
-        closeModal();
+document.addEventListener('DOMContentLoaded', function() {
+    // Inicializar mapa cuando el DOM esté listo
+    initMap();
+
+    // Cerrar modal al hacer click en el botón X
+    const closeBtn = document.querySelector('.close-btn');
+    if (closeBtn) {
+        closeBtn.addEventListener('click', closeModal);
     }
-});
 
-document.addEventListener('keydown', function(event) {
-    if (event.key === 'Escape') {
-        closeModal();
+    // Cerrar modal al hacer click fuera del contenido
+    const modal = document.getElementById('infoModal');
+    if (modal) {
+        window.addEventListener('click', function(event) {
+            if (event.target === modal) {
+                closeModal();
+            }
+        });
     }
+
+    // Cerrar modal con tecla ESC
+    document.addEventListener('keydown', function(event) {
+        if (event.key === 'Escape') {
+            closeModal();
+        }
+    });
 });
 
-// Cargar datos al iniciar
-window.addEventListener('load', function() {
-    loadMunicipiosData();
-});
+// ============================================
+// ESTILOS PARA TOOLTIPS
+// ============================================
+
+// Agregar estilos CSS dinámicamente para los tooltips
+const style = document.createElement('style');
+style.textContent = `
+    .municipio-tooltip {
+        background-color: rgba(30, 60, 114, 0.9) !important;
+        color: white !important;
+        border: none !important;
+        border-radius: 4px !important;
+        padding: 8px 12px !important;
+        font-size: 14px !important;
+        font-weight: 500 !important;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3) !important;
+    }
+
+    .municipio-tooltip::before {
+        border-top-color: rgba(30, 60, 114, 0.9) !important;
+    }
+
+    .pueblo-magico-tooltip {
+        background-color: rgba(139, 0, 139, 0.9) !important;
+        color: white !important;
+        border: none !important;
+        border-radius: 4px !important;
+        padding: 8px 12px !important;
+        font-size: 14px !important;
+        font-weight: 600 !important;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3) !important;
+    }
+
+    .pueblo-magico-tooltip::before {
+        border-top-color: rgba(139, 0, 139, 0.9) !important;
+    }
+`;
+document.head.appendChild(style);
